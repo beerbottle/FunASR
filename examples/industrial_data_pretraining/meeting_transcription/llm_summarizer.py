@@ -6,8 +6,8 @@
 """
 Pluggable LLM client for generating structured meeting minutes.
 
-Default: ClaudeClient using the official anthropic Python SDK.
-Placeholder: OpenAICompatClient (stub — fill in SDK calls for your provider).
+Default: KimiClient — Moonshot AI Kimi K2 via OpenAI-compatible API.
+Also available: ClaudeClient (provider: "claude"), OpenAICompatClient (provider: "openai_compat").
 """
 
 import hashlib
@@ -212,23 +212,233 @@ class ClaudeClient(LLMClient):
 
 
 # ---------------------------------------------------------------------------
-# OpenAI-compatible stub (DashScope, local vLLM, etc.)
+# Kimi K2 (Moonshot AI) — DEFAULT
+# ---------------------------------------------------------------------------
+class KimiClient(LLMClient):
+    """
+    Kimi K2 from Moonshot AI via OpenAI-compatible API.
+    Requires: pip install openai
+    API key:  MOONSHOT_API_KEY environment variable
+    """
+
+    KIMI_BASE_URL = "https://api.moonshot.cn/v1"
+
+    def __init__(
+        self,
+        model: str = "kimi-k2",
+        max_tokens: int = 8192,
+        cache_dir: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise ImportError("pip install openai")
+        key = api_key or os.environ.get("MOONSHOT_API_KEY", "")
+        if not key:
+            raise ValueError(
+                "Kimi K2 requires MOONSHOT_API_KEY environment variable "
+                "(get one at https://platform.moonshot.cn/)"
+            )
+        self._client = OpenAI(base_url=self.KIMI_BASE_URL, api_key=key)
+        self.model = model
+        self.max_tokens = max_tokens
+        self.cache_dir = Path(cache_dir) if cache_dir else None
+
+    def _cache_key(self, transcript: str, system_prompt: str) -> str:
+        raw = f"{transcript}\x00{system_prompt}\x00{self.model}"
+        return hashlib.sha1(raw.encode()).hexdigest()[:20]
+
+    def _load_cache(self, key: str) -> Optional[Dict[str, Any]]:
+        if not self.cache_dir:
+            return None
+        p = self.cache_dir / f"llm_{key}.json"
+        if p.exists():
+            logger.info("LLM cache hit: %s", key)
+            with open(p, encoding="utf-8") as f:
+                return json.load(f)
+        return None
+
+    def _save_cache(self, key: str, result: Dict[str, Any]) -> None:
+        if not self.cache_dir:
+            return
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        p = self.cache_dir / f"llm_{key}.json"
+        tmp = p.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, p)
+
+    def summarize(
+        self,
+        transcript_text: str,
+        keyword_hits: List[dict],
+        system_prompt: str,
+        user_prompt_template: str,
+    ) -> Dict[str, Any]:
+        from keywords import format_hits_for_prompt
+
+        keyword_section = format_hits_for_prompt(keyword_hits)
+        user_msg = user_prompt_template.format(
+            transcript=transcript_text,
+            keyword_hits=keyword_section,
+        )
+
+        cache_key = self._cache_key(transcript_text, system_prompt)
+        cached = self._load_cache(cache_key)
+        if cached is not None:
+            return cached
+
+        use_stream = len(transcript_text) > 8000
+        logger.info(
+            "Calling Kimi %s (stream=%s) for structured minutes …", self.model, use_stream
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_msg},
+        ]
+        kwargs = dict(
+            model=self.model,
+            messages=messages,
+            max_tokens=self.max_tokens,
+            response_format={"type": "json_object"},
+            temperature=0.3,
+        )
+
+        if use_stream:
+            result_text = ""
+            with self._client.chat.completions.create(stream=True, **kwargs) as stream:
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content if chunk.choices else None
+                    if delta:
+                        result_text += delta
+        else:
+            resp = self._client.chat.completions.create(**kwargs)
+            result_text = resp.choices[0].message.content or ""
+
+        result = _parse_json_from_response(result_text)
+        self._save_cache(cache_key, result)
+        return result
+
+
+# ---------------------------------------------------------------------------
+# OpenAI-compatible (DashScope, local vLLM, Ollama, etc.)
 # ---------------------------------------------------------------------------
 class OpenAICompatClient(LLMClient):
     """
-    Placeholder for OpenAI-compatible APIs (DashScope, local vLLM, etc.).
-    Fill in your provider's SDK calls below.
+    Generic OpenAI-compatible client for DashScope, vLLM, Ollama, etc.
+    Requires: pip install openai
     """
 
-    def __init__(self, base_url: str, api_key: str, model: str, **kwargs):
-        # Example: from openai import OpenAI; self._client = OpenAI(base_url=base_url, api_key=api_key)
-        raise NotImplementedError(
-            "OpenAICompatClient is a placeholder. "
-            "Install openai and fill in the SDK calls for your provider."
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        api_key: Optional[str] = None,
+        max_tokens: int = 8192,
+        cache_dir: Optional[str] = None,
+    ):
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise ImportError("pip install openai")
+        key = api_key or os.environ.get("LLM_API_KEY", "none")
+        self._client = OpenAI(base_url=base_url, api_key=key)
+        self.model = model
+        self.max_tokens = max_tokens
+        self.cache_dir = Path(cache_dir) if cache_dir else None
+
+    def _cache_key(self, transcript: str, system_prompt: str) -> str:
+        raw = f"{transcript}\x00{system_prompt}\x00{self.model}"
+        return hashlib.sha1(raw.encode()).hexdigest()[:20]
+
+    def _load_cache(self, key: str) -> Optional[Dict[str, Any]]:
+        if not self.cache_dir:
+            return None
+        p = self.cache_dir / f"llm_{key}.json"
+        if p.exists():
+            logger.info("LLM cache hit: %s", key)
+            with open(p, encoding="utf-8") as f:
+                return json.load(f)
+        return None
+
+    def _save_cache(self, key: str, result: Dict[str, Any]) -> None:
+        if not self.cache_dir:
+            return
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        p = self.cache_dir / f"llm_{key}.json"
+        tmp = p.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, p)
+
+    def summarize(
+        self,
+        transcript_text: str,
+        keyword_hits: List[dict],
+        system_prompt: str,
+        user_prompt_template: str,
+    ) -> Dict[str, Any]:
+        from keywords import format_hits_for_prompt
+
+        keyword_section = format_hits_for_prompt(keyword_hits)
+        user_msg = user_prompt_template.format(
+            transcript=transcript_text,
+            keyword_hits=keyword_section,
         )
 
-    def summarize(self, transcript_text, keyword_hits, system_prompt, user_prompt_template):
-        raise NotImplementedError
+        cache_key = self._cache_key(transcript_text, system_prompt)
+        cached = self._load_cache(cache_key)
+        if cached is not None:
+            return cached
+
+        use_stream = len(transcript_text) > 8000
+        logger.info(
+            "Calling OpenAI-compat %s (stream=%s) for structured minutes …",
+            self.model,
+            use_stream,
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_msg},
+        ]
+        kwargs = dict(
+            model=self.model,
+            messages=messages,
+            max_tokens=self.max_tokens,
+            temperature=0.3,
+        )
+        # response_format is widely supported but not universal; try with it
+        try:
+            kwargs_json = dict(kwargs, response_format={"type": "json_object"})
+            if use_stream:
+                result_text = ""
+                with self._client.chat.completions.create(stream=True, **kwargs_json) as stream:
+                    for chunk in stream:
+                        delta = chunk.choices[0].delta.content if chunk.choices else None
+                        if delta:
+                            result_text += delta
+            else:
+                resp = self._client.chat.completions.create(**kwargs_json)
+                result_text = resp.choices[0].message.content or ""
+        except Exception:
+            # Fallback: omit response_format for providers that don't support it
+            if use_stream:
+                result_text = ""
+                with self._client.chat.completions.create(stream=True, **kwargs) as stream:
+                    for chunk in stream:
+                        delta = chunk.choices[0].delta.content if chunk.choices else None
+                        if delta:
+                            result_text += delta
+            else:
+                resp = self._client.chat.completions.create(**kwargs)
+                result_text = resp.choices[0].message.content or ""
+
+        result = _parse_json_from_response(result_text)
+        self._save_cache(cache_key, result)
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -236,21 +446,30 @@ class OpenAICompatClient(LLMClient):
 # ---------------------------------------------------------------------------
 def build_llm_client(config: dict, cache_dir: Optional[str] = None) -> LLMClient:
     """Instantiate LLM client from config dict."""
-    provider = config.get("provider", "claude").lower()
-    if provider == "claude":
+    provider = config.get("provider", "kimi").lower()
+    if provider == "kimi":
+        return KimiClient(
+            model=config.get("model", "kimi-k2"),
+            max_tokens=config.get("max_tokens", 8192),
+            cache_dir=cache_dir,
+            api_key=config.get("api_key") or os.environ.get("MOONSHOT_API_KEY"),
+        )
+    elif provider == "claude":
         return ClaudeClient(
             model=config.get("model", "claude-opus-4-8"),
             max_tokens=config.get("max_tokens", 16000),
             cache_dir=cache_dir,
         )
-    elif provider in ("openai", "dashscope", "openai_compat"):
+    elif provider in ("openai", "openai_compat", "dashscope", "vllm", "ollama"):
         return OpenAICompatClient(
             base_url=config["base_url"],
-            api_key=config.get("api_key", os.environ.get("LLM_API_KEY", "")),
             model=config["model"],
+            api_key=config.get("api_key") or os.environ.get("LLM_API_KEY"),
+            max_tokens=config.get("max_tokens", 8192),
+            cache_dir=cache_dir,
         )
     else:
-        raise ValueError(f"Unknown LLM provider: {provider}")
+        raise ValueError(f"Unknown LLM provider: {provider!r} — expected 'kimi', 'claude', or 'openai_compat'")
 
 
 # ---------------------------------------------------------------------------

@@ -39,14 +39,28 @@ keywords:
 # ── LLM Structured Minutes ────────────────────────────────────────────────────
 llm:
   enabled: false                # Set to true to generate structured minutes
-  provider: "claude"            # "claude" (default) | "openai_compat"
-  model: "claude-opus-4-8"      # Claude model ID
-  max_tokens: 16000             # Max output tokens
-  # Prompt customization (null = use built-in defaults)
+
+  # ── Kimi K2 (default) ──────────────────────────────────────────────────────
+  provider: "kimi"              # Default provider: Kimi K2 (Moonshot AI)
+  model: "kimi-k2"              # Model ID; also accepts "kimi-k2-0711" etc.
+  max_tokens: 8192
+  # api_key: ""                 # Or set env var: MOONSHOT_API_KEY
+                                # Get key at: https://platform.moonshot.cn/
+
+  # ── Claude (optional) ──────────────────────────────────────────────────────
+  # provider: "claude"
+  # model: "claude-opus-4-8"
+  # max_tokens: 16000
+  # (set ANTHROPIC_API_KEY env var)
+
+  # ── OpenAI-compatible (DashScope, vLLM, Ollama, etc.) ─────────────────────
+  # provider: "openai_compat"
+  # base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  # model: "qwen-max"
+  # api_key: ""                 # Or set env var: LLM_API_KEY
+
+  # ── Prompt customization (null = use built-in defaults) ───────────────────
   system_prompt_path: null      # Path to prompts/minutes_system.txt
   user_prompt_path: null        # Path to prompts/minutes_user.txt
-  # For openai_compat provider:
-  # base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-  # api_key: ""  # or set env var LLM_API_KEY
 
 log_level: "INFO"               # DEBUG / INFO / WARNING / ERROR
