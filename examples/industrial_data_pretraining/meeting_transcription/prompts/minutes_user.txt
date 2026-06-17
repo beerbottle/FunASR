@@ -1,0 +1,18 @@
+请根据以下会议/课堂录音转写文本，生成结构化纪要（严格 JSON 格式，不含其他文字）。
+
+## 转写文本
+（说话人编号与 attendees.spk 字段对应）
+
+{transcript}
+
+---
+
+## 关键词命中（重点线索）
+{keyword_hits}
+
+---
+
+请按照要求的 JSON schema 输出结构化纪要，包含：
+title（主题）、attendees（说话人列表）、summary（50-150字摘要）、
+topics（议题列表）、decisions（决议）、action_items（行动项）、
+risks_or_open_questions（风险/待讨论）、keyword_highlights（关键词亮点）。

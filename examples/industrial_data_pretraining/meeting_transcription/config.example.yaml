@@ -1,0 +1,52 @@
+# Meeting Transcription Pipeline Configuration
+# Copy this to config.yaml and customize as needed.
+
+# ── ASR / FunASR ──────────────────────────────────────────────────────────────
+asr:
+  model: "paraformer-zh"        # ASR model (paraformer-zh for Mandarin)
+  vad_model: "fsmn-vad"         # Voice Activity Detection
+  punc_model: "ct-punc"         # Punctuation restoration
+  spk_model: "cam++"            # Speaker diarization (CAM++)
+  language: "auto"              # "auto", "zh", "en", "ja", etc.
+  use_itn: true                 # Inverse Text Normalization (numbers/dates)
+  merge_vad: true               # Merge short VAD segments
+  merge_length_s: 15            # Max merged VAD segment length (seconds)
+  batch_size_s: 300             # FunASR internal batch size in seconds
+
+# ── Windowing & Speaker Diarization ───────────────────────────────────────────
+pipeline:
+  window_s: null                # Window size in seconds (null = auto: 600s GPU, 180s CPU)
+  overlap_s: 5                  # Overlap at window boundaries (seconds)
+  merge_thr: 0.78               # Cosine similarity threshold for speaker merging
+  preset_spk_num: null          # Force N speakers (null = auto-detect)
+
+# ── Device ────────────────────────────────────────────────────────────────────
+device: null                    # null = auto (cuda:0 → mps → cpu)
+
+# ── Directories ───────────────────────────────────────────────────────────────
+work_dir: "./work_dir"          # Cache directory (window JSON files, LLM cache)
+output:
+  dir: "./output"               # Where to write transcript.json/txt, keywords, minutes
+
+# ── Hotwords (optional) ───────────────────────────────────────────────────────
+# hotword: "FunASR 阿里巴巴 会议"  # Space-separated; boosts ASR recognition
+
+# ── Keyword Screening ─────────────────────────────────────────────────────────
+keywords:
+  dict_path: null               # Path to keywords.json (null = skip screening)
+  # dict_path: "./keywords.example.json"
+
+# ── LLM Structured Minutes ────────────────────────────────────────────────────
+llm:
+  enabled: false                # Set to true to generate structured minutes
+  provider: "claude"            # "claude" (default) | "openai_compat"
+  model: "claude-opus-4-8"      # Claude model ID
+  max_tokens: 16000             # Max output tokens
+  # Prompt customization (null = use built-in defaults)
+  system_prompt_path: null      # Path to prompts/minutes_system.txt
+  user_prompt_path: null        # Path to prompts/minutes_user.txt
+  # For openai_compat provider:
+  # base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  # api_key: ""  # or set env var LLM_API_KEY
+
+log_level: "INFO"               # DEBUG / INFO / WARNING / ERROR
